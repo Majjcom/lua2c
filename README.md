@@ -40,7 +40,7 @@ Output artifacts:
 
 - `build/bin/lua2c.exe`: conversion tool.
 - `build/lib/lua2c.lib`: C++ conversion library.
-- `build/bin/lualib.dll`, `build-msvc/lib/lualib.lib`: companion C runtime and import library.
+- `build/bin/lualib.dll`, `build/lib/lualib.lib`: companion C runtime and import library.
 - `build/bin/lua.exe`, `luac.exe`: companion Lua interpreter and bytecode compiler.
 
 Optional configuration:

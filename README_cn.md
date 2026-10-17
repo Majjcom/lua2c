@@ -37,7 +37,7 @@ ctest --test-dir build --output-on-failure -j 8
 
 - `build/bin/lua2c.exe`：转换工具。
 - `build/lib/lua2c.lib`：C++ 转换库。
-- `build/bin/lualib.dll`、`build-msvc/lib/lualib.lib`：配套 C 运行时及导入库。
+- `build/bin/lualib.dll`、`build/lib/lualib.lib`：配套 C 运行时及导入库。
 - `build/bin/lua.exe`、`luac.exe`：配套 Lua 主程序和字节码编译器。
 
 可选配置：
