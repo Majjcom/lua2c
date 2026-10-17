@@ -23,23 +23,22 @@ Lua 内核扩展包括 `Proto::lua2c_entry`、新原型初始化、VM 原生调�
 
 ## 构建
 
-需要 CMake 3.20+、C99/C++17 编译器。Windows 下先在 **cmd** 中激活 MSVC：
+需要 CMake 3.20+、C99/C++17 编译器。
 
 ```bat
-call "D:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
-cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-msvc -j 8
-ctest --test-dir build-msvc --output-on-failure -j 8
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 8
+ctest --test-dir build --output-on-failure -j 8
 ```
 
 `vcvars64.bat` 路径按实际安装位置调整。多配置生成器使用 `--config Release` 和 `ctest -C Release`。
 
 输出：
 
-- `build-msvc/bin/lua2c.exe`：转换工具。
-- `build-msvc/lib/lua2c.lib`：C++ 转换库。
-- `build-msvc/bin/lualib.dll`、`build-msvc/lib/lualib.lib`：配套 C 运行时及导入库。
-- `build-msvc/bin/lua.exe`、`luac.exe`：配套 Lua 主程序和字节码编译器。
+- `build/bin/lua2c.exe`：转换工具。
+- `build/lib/lua2c.lib`：C++ 转换库。
+- `build/bin/lualib.dll`、`build-msvc/lib/lualib.lib`：配套 C 运行时及导入库。
+- `build/bin/lua.exe`、`luac.exe`：配套 Lua 主程序和字节码编译器。
 
 可选配置：
 
@@ -54,9 +53,9 @@ ctest --test-dir build-msvc --output-on-failure -j 8
 静态运行时的断言测试配置：
 
 ```bat
-cmake -S . -B build-msvc-static -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLUA2C_SHARED_RUNTIME=OFF -DLUA2C_RUNTIME_ASSERTIONS=ON
-cmake --build build-msvc-static -j 8
-ctest --test-dir build-msvc-static --output-on-failure -j 8
+cmake -S . -B build-static -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLUA2C_SHARED_RUNTIME=OFF -DLUA2C_RUNTIME_ASSERTIONS=ON
+cmake --build build-static -j 8
+ctest --test-dir build-static --output-on-failure -j 8
 ```
 
 ## 转换
@@ -64,11 +63,11 @@ ctest --test-dir build-msvc-static --output-on-failure -j 8
 运行 `lua2c --help` 或 `lua2c -h` 可查看完整参数说明、默认值和使用示例。
 
 ```bat
-build-msvc\bin\lua2c.exe -o program.c script.lua
-build-msvc\bin\lua2c.exe --bytecode -o program.c script.luac
-build-msvc\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
-build-msvc\bin\lua2c.exe --header --module mymodule -o mymodule.c module.lua
-build-msvc\bin\lua2c.exe --main-name run_script --header -o program.c script.lua
+build\bin\lua2c.exe -o program.c script.lua
+build\bin\lua2c.exe --bytecode -o program.c script.luac
+build\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
+build\bin\lua2c.exe --header --module mymodule -o mymodule.c module.lua
+build\bin\lua2c.exe --main-name run_script --header -o program.c script.lua
 ```
 
 输入格式默认自动识别；可使用 `--source` / `--bytecode` 强制指定。
@@ -132,14 +131,14 @@ if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK) {
 安装头文件和库：
 
 ```bat
-cmake --install build-msvc --prefix install-msvc
+cmake --install build --prefix install
 ```
 
 使用 MSVC 编译生成文件（共享运行时）：
 
 ```bat
-cl /nologo /O2 /MD /std:c11 /DLUA2C_MAIN=1 /DLUA_BUILD_AS_DLL /DLUA2C_RUNTIME_SHARED /Iinstall-msvc\include\lua2c\runtime program.c install-msvc\lib\lualib.lib /Fe:install-msvc\bin\program.exe
-install-msvc\bin\program.exe arg1 arg2
+cl /nologo /O2 /MD /std:c11 /DLUA2C_MAIN=1 /DLUA_BUILD_AS_DLL /DLUA2C_RUNTIME_SHARED /Iinstall\include\lua2c\runtime program.c install\lib\lualib.lib /Fe:install\bin\program.exe
+install\bin\program.exe arg1 arg2
 ```
 
 生成代码只依赖 C 运行时和配套头文件，不链接 C++ 转换库。
@@ -148,9 +147,9 @@ install-msvc\bin\program.exe arg1 arg2
 ### 编译为 Lua 模块
 
 ```bat
-build-msvc\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
-cl /nologo /O2 /MD /LD /DLUA2C_API=1 /DLUA_BUILD_AS_DLL /DLUA2C_RUNTIME_SHARED /Iinstall-msvc\include\lua2c\runtime mymodule.c install-msvc\lib\lualib.lib /Fe:install-msvc\bin\mymodule.dll
-install-msvc\bin\lua.exe -e "package.cpath='install-msvc/bin/?.dll;'..package.cpath; local m=require('mymodule')"
+build\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
+cl /nologo /O2 /MD /LD /DLUA2C_API=1 /DLUA_BUILD_AS_DLL /DLUA2C_RUNTIME_SHARED /Iinstall\include\lua2c\runtime mymodule.c install\lib\lualib.lib /Fe:install\bin\mymodule.dll
+install\bin\lua.exe -e "package.cpath='install/bin/?.dll;'..package.cpath; local m=require('mymodule')"
 ```
 
 模块执行脚本并保留其返回行为：通常脚本返回一个表，但并不强制如此。
