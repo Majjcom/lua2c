@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(lua2c_library_example LANGUAGES CXX)
+find_package(lua2c CONFIG REQUIRED)
+add_executable(convert_example main.cpp)
+target_compile_features(convert_example PRIVATE cxx_std_17)
+target_link_libraries(convert_example PRIVATE lua2c::lua2c)

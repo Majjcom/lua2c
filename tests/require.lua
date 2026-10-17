@@ -1,0 +1,15 @@
+local path = assert(arg[1])
+local directory = path:match("^(.*)[/\\]") or "."
+local extension = path:match("(%.[^%.]+)$")
+package.cpath = directory .. "/?" .. extension .. ";" .. package.cpath
+local module = require("native_module")
+assert(module.square(9) == 81)
+assert(module.counter(2) == 2)
+assert(module.counter(3) == 5)
+assert(debug.getinfo(module.square, "S").what == "Lua")
+local co = coroutine.create(function() return module.counter(coroutine.yield("ready")) end)
+local ok, value = coroutine.resume(co)
+assert(ok and value == "ready")
+ok, value = coroutine.resume(co, 4)
+assert(ok and value == 9)
+print("require tests passed")

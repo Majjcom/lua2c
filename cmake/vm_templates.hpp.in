@@ -1,0 +1,5 @@
+#pragma once
+#include <string>
+namespace lua2c::detail {
+inline const std::string vm_source = @LUA2C_VM_LITERAL@;
+}
