@@ -570,8 +570,10 @@ typedef struct Proto {
   LocVar *locvars;  /* information about local variables (debug information) */
   TString  *source;  /* used for debug information */
   GCObject *gclist;
-  /* Native executor: 0 = boundary return, 1 = new frame, 2 = caller. */
-  lua_CFunction lua2c_entry;
+  /* Native executor receives the VM's local hook trap (distinct from ci's).
+     Returns 0 = boundary return, 1 = new frame, 2 = caller. */
+  int (*lua2c_entry)(lua_State *L, int trap);
+  lua_CFunction lua2c_resume;  /* finish an interrupted native operation without code */
 } Proto;
 
 /* }================================================================== */

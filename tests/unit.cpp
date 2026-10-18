@@ -71,17 +71,51 @@ void test_strip() {
     check(!lua2c::convert("error('must not execute')", options).empty(), "strip executed the input");
     rejects("local = broken", options);
 }
+void test_no_bytecode() {
+    const std::string source = "local capture = 4; local function named(x) return x + capture end; return named";
+    lua2c::Options options;
+    check(!options.no_bytecode, "bytecode arrays disabled by default");
+    const auto normal = lua2c::convert(source, options);
+    check(normal.find("static const Instruction lua2c_code_") != std::string::npos, "default has no instruction arrays");
+    lua_State* L = luaL_newstate();
+    check(L != nullptr, "no-bytecode state allocation failed");
+    check(luaL_loadbuffer(L, source.data(), source.size(), options.chunk_name.c_str()) == LUA_OK, "no-bytecode load failed");
+    std::string bytecode, stripped;
+    check(lua_dump(L, dump, &bytecode, 0) == 0 && lua_dump(L, dump, &stripped, 1) == 0, "no-bytecode dump failed");
+    lua_close(L);
+    options.no_bytecode = true;
+    for (bool strip : {false, true}) {
+        options.strip = strip;
+        const auto code = lua2c::convert(source, options);
+        check(code.find("lua2c_code_") == std::string::npos, "no-bytecode output retains instruction arrays");
+        check(code.find("cl->p->code") == std::string::npos, "no-bytecode executor uses pointer positions");
+        check(code.find("static int lua2c_resume_1") != std::string::npos, "nested resume handler missing");
+        check(code == lua2c::convert(bytecode, options), "no-bytecode source/binary mismatch");
+        if (strip) check(code == lua2c::convert(stripped, options), "no-bytecode stripped input mismatch");
+        check((code.find("lua2c_locals_") != std::string::npos) == !strip, "no-bytecode option changed strip semantics");
+        check(code == lua2c::convert(source, options), "no-bytecode output is not deterministic");
+        options.input_kind = lua2c::InputKind::Bytecode;
+        check(code == lua2c::convert(bytecode, options), "forced no-bytecode input mismatch");
+        for (std::size_t n = 0; n < bytecode.size(); ++n) rejects(bytecode.substr(0, n), options);
+        rejects(bytecode + "extra", options);
+        options.input_kind = lua2c::InputKind::Source;
+        check(code == lua2c::convert(source, options), "forced no-bytecode source mismatch");
+        options.input_kind = lua2c::InputKind::Auto;
+        rejects("local = broken", options);
+    }
+}
 }
 int main() {
     try {
         test_strip();
+        test_no_bytecode();
         const std::string source = "local function add(a,b) return a+b end; return add(2,3)";
         auto code = lua2c::convert(source);
         check(code.find("int lua2c_main(lua_State *L)") != std::string::npos, "missing main entry");
         check(code.find("lua2c_gen_add_") != std::string::npos, "missing named function");
         check(code.find("luaL_loadbuffer") == std::string::npos, "interpreter wrapper emitted");
         check(code.find("Lua 5.4.9") != std::string::npos, "generated code names the wrong Lua revision");
-        check(code.find("0x00010009UL") != std::string::npos, "generated code uses the old runtime ABI");
+        check(code.find("0x0001000AUL") != std::string::npos, "generated code uses the old runtime ABI");
         check(lua2c::convert(source) == code, "output is not deterministic");
         lua2c::Options named_options;
         check(named_options.main_name == "lua2c_main", "entry name default changed");
@@ -95,7 +129,7 @@ int main() {
         check(lua2c::convert(source, named_options).find("return L(lua2c_state);") != std::string::npos,
             "module parameter shadows the custom entry name");
         for (const std::string invalid : {"", "1entry", "bad-name", "for", "class", "_Thread_local", "main",
-                 "luaopen_lua2c_module", "lua2c_check_runtime", "lua2c_gen_chunk_p0", "lua2c_proto_0", "LUA2C_API"}) {
+                 "luaopen_lua2c_module", "lua2c_check_runtime", "lua2c_gen_chunk_p0", "lua2c_proto_0", "lua2c_resume_0", "LUA2C_API"}) {
             named_options.main_name = invalid;
             rejects(source, named_options);
         }

@@ -73,7 +73,7 @@ void strip_debug(detail::Proto& proto) {
 std::string emit_bytecode(std::string_view input, const Options& options) {
     auto proto = detail::parse_bytecode(input); // Validate before discarding debug data.
     if (options.strip) strip_debug(proto);
-    return detail::emit(std::move(proto), options.module_name, options.main_name);
+    return detail::emit(std::move(proto), options.module_name, options.main_name, options.no_bytecode);
 }
 }
 

@@ -57,7 +57,7 @@ void validate_main_name(const std::string& name, const std::string& module_name)
         if (name == symbol) throw Error("main_name conflicts with an internal or program entry symbol");
     constexpr std::string_view prefixes[] = {
         "lua2c_gen_", "lua2c_proto_", "lua2c_bytes_", "lua2c_code_", "lua2c_constants_", "lua2c_upvalues_",
-        "lua2c_children_", "lua2c_lines_", "lua2c_abslines_", "lua2c_locals_", "LUA2C_"
+        "lua2c_children_", "lua2c_lines_", "lua2c_abslines_", "lua2c_locals_", "lua2c_resume_", "LUA2C_"
     };
     for (const auto prefix : prefixes)
         if (name.compare(0, prefix.size(), prefix) == 0) throw Error("main_name uses a reserved generated-symbol prefix");
@@ -137,14 +137,16 @@ std::string next_jump(const Proto& p, int pc) {
     return jump(next);
 }
 
-void emit_function(std::ostream& out, const Proto& p, const std::array<std::string, NUM_OPCODES>& bodies) {
-    out << "\nstatic int " << p.name << "(lua_State *L) {\n"
+void emit_function(std::ostream& output, const Proto& p, const std::array<std::string, NUM_OPCODES>& bodies,
+                   bool no_bytecode) {
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << "\nstatic int " << p.name << "(lua_State *L, int trap) {\n"
            "  CallInfo *ci = L->ci;\n"
            "  LClosure *cl = ci_func(ci);\n"
            "  TValue *k = cl->p->k;\n"
            "  StkId base = ci->func.p + 1;\n"
            "  const Instruction *pc = ci->u.l.savedpc;\n"
-           "  int trap = ci->u.l.trap;\n"
            "  (void)k; (void)base;\n"
            "  /* Dispatch only when entering/resuming a frame, never per opcode. */\n"
            "  switch (pc - cl->p->code) {\n";
@@ -159,13 +161,17 @@ void emit_function(std::ostream& out, const Proto& p, const std::array<std::stri
         out << "lua2c_pc_" << index << ":\n"
                "  pc = cl->p->code + " << index << ";\n"
                "  if (l_unlikely(trap)) {\n"
-               "    trap = luaG_traceexec(L, pc);\n"
+               "    trap = " << (no_bytecode ? "luaG_traceexecnative(L, pc, " + std::to_string(isIT(i) != 0) + ")"
+                                            : "luaG_traceexec(L, pc)") << ";\n"
                "    updatebase(ci);\n"
                "  }\n"
                "  pc = cl->p->code + " << index + 1 << ";\n"
                "lua2c_body_" << index << ": {\n"
                "  const Instruction i = " << i << "u; /* " << opnames[op] << " */\n"
                "  (void)i;\n";
+        if (no_bytecode && op >= OP_EQ && op <= OP_TESTSET)
+            out << "  const Instruction lua2c_nextjump = " << p.code[index + 1] << "u;\n"
+                   "  (void)lua2c_nextjump;\n";
         if (!isIT(i)) out << "  L->top.p = base;\n";
         if (op == OP_TFORPREP) {
             const int target = index + 1 + GETARG_Bx(i);
@@ -201,6 +207,61 @@ void emit_function(std::ostream& out, const Proto& p, const std::array<std::stri
         out << "}\n";
     }
     out << "}\n";
+    auto text = out.str();
+    if (no_bytecode) {
+        replace(text, "const Instruction *pc = ci->u.l.savedpc;", "int pc = ci->u.l.lua2c_pc;");
+        replace(text, "pc - cl->p->code", "pc");
+        replace(text, "cl->p->code + ", "");
+    }
+    output << text;
+}
+
+// Lower the authoritative VM's yield completion bodies to per-position C.
+// No instruction decoder, instruction array, or reconstruction is needed at runtime.
+void emit_resume(std::ostream& out, const Proto& p) {
+    const std::string source = vm_source;
+    const auto start = source.find("void luaV_finishOp (");
+    const auto end = source.find("#define l_addi(", start);
+    if (start == std::string::npos || end == std::string::npos)
+        throw Error("bundled yield completion markers changed");
+    const auto finish = source.substr(start, end - start);
+    out << "\nstatic int lua2c_resume_" << p.id << "(lua_State *L) {\n"
+           "  CallInfo *ci = L->ci;\n  StkId base = ci->func.p + 1;\n  (void)base;\n"
+           "  switch (ci->u.l.lua2c_pc - 1) {\n";
+    for (std::size_t pc = 0; pc < p.code.size(); ++pc) {
+        const Instruction i = p.code[pc];
+        const auto op = GET_OPCODE(i);
+        const auto marker = "case OP_" + std::string(opnames[op]) + ":";
+        const auto at = finish.find(marker);
+        if (at == std::string::npos) continue;  // cannot yield
+        const auto begin = finish.find('{', at);
+        if (begin == std::string::npos) throw Error("bundled yield completion handler changed");
+        auto last = begin + 1;
+        int depth = 1;
+        while (last < finish.size() && depth) {
+            if (finish[last] == '{') ++depth;
+            if (finish[last] == '}') --depth;
+            ++last;
+        }
+        if (depth) throw Error("bundled yield completion handler changed");
+        std::string body = finish.substr(begin + 1, last - begin - 2);
+        replace(body, "lua_assert(GET_OPCODE(*ci->u.l.savedpc) == OP_JMP);", "/* validated following jump */");
+        replace(body, "ci->u.l.savedpc", "ci->u.l.lua2c_pc");
+        if (pc > 0)
+            replace(body, "GETARG_A(*(ci->u.l.lua2c_pc - 2))", std::to_string(GETARG_A(p.code[pc - 1])));
+        replace(body, "GETARG_A(inst)", std::to_string(GETARG_A(i)));
+        replace(body, "GETARG_k(inst)", std::to_string(GETARG_k(i)));
+        out << "    case " << pc << ": {" << body << "}\n";
+    }
+    // These operations need no fixup after their callees return.
+    for (std::size_t pc = 0; pc < p.code.size(); ++pc) {
+        const auto op = GET_OPCODE(p.code[pc]);
+        if (op == OP_TFORCALL || op == OP_CALL || op == OP_TAILCALL ||
+            op == OP_SETTABUP || op == OP_SETTABLE || op == OP_SETI || op == OP_SETFIELD)
+            out << "    case " << pc << ": break;\n";
+    }
+    out << "    default: luaG_runerror(L, \"invalid native yield position\");\n"
+           "  }\n  return 0;\n}\n";
 }
 
 class Metadata {
@@ -220,7 +281,7 @@ public:
         out_ << "\n};\n";
         return "{" + name + ", " + std::to_string(value->size()) + "}";
     }
-    void proto(const Proto& p) {
+    void proto(const Proto& p, bool no_bytecode) {
         const auto suffix = std::to_string(p.id);
         const auto source = bytes(p.source);
         std::vector<std::string> constants, upvalues, locals;
@@ -233,12 +294,14 @@ public:
                 std::to_string(u.kind) + ", " + bytes(u.name) + "}");
         for (const auto& l : p.locals)
             locals.push_back("{" + bytes(l.name) + ", " + std::to_string(l.startpc) + ", " + std::to_string(l.endpc) + "}");
-        out_ << "static const Instruction lua2c_code_" << suffix << "[] = {\n";
-        for (std::size_t i = 0; i < p.code.size(); ++i) {
-            out_ << p.code[i] << "u,";
-            if (i % 12 == 11) out_ << '\n';
+        if (!no_bytecode) {
+            out_ << "static const Instruction lua2c_code_" << suffix << "[] = {\n";
+            for (std::size_t i = 0; i < p.code.size(); ++i) {
+                out_ << p.code[i] << "u,";
+                if (i % 12 == 11) out_ << '\n';
+            }
+            out_ << "\n};\n";
         }
-        out_ << "\n};\n";
         const auto array = [&](const std::string& type, const std::string& prefix, const std::vector<std::string>& elements) {
             if (elements.empty()) return;
             out_ << "static const " << type << " " << prefix << suffix << "[] = {\n";
@@ -267,19 +330,19 @@ public:
         out_ << "static const Lua2cProto lua2c_proto_" << suffix << " = {\n"
              << p.numparams << ',' << p.is_vararg << ',' << p.maxstacksize << ','
              << p.linedefined << ',' << p.lastlinedefined << ',' << source << ",\n"
-             << p.code.size() << ",lua2c_code_" << suffix << ",\n"
+             << p.code.size() << ',' << (no_bytecode ? "NULL" : "lua2c_code_" + suffix) << ",\n"
              << p.constants.size() << ',' << pointer(p.constants.size(), "lua2c_constants_") << ",\n"
              << p.upvalues.size() << ',' << pointer(p.upvalues.size(), "lua2c_upvalues_") << ",\n"
              << p.children.size() << ',' << pointer(p.children.size(), "lua2c_children_") << ",\n"
              << p.lineinfo.size() << ',' << pointer(p.lineinfo.size(), "lua2c_lines_") << ",\n"
              << p.abslineinfo.size() << ',' << pointer(p.abslineinfo.size(), "lua2c_abslines_") << ",\n"
              << p.locals.size() << ',' << pointer(p.locals.size(), "lua2c_locals_") << ",\n"
-             << p.name << "\n};\n";
+             << p.name << ',' << (no_bytecode ? "lua2c_resume_" + suffix : "NULL") << "\n};\n";
     }
 };
 }
 
-std::string emit(Proto p, const std::string& module_name, const std::string& main_name) {
+std::string emit(Proto p, const std::string& module_name, const std::string& main_name, bool no_bytecode) {
     if (!identifier(module_name)) throw Error("module_name must be a C identifier");
     validate_main_name(main_name, module_name);
     std::vector<Proto*> protos;
@@ -289,15 +352,22 @@ std::string emit(Proto p, const std::string& module_name, const std::string& mai
     const auto bodies = handlers();
     std::ostringstream out;
     out.imbue(std::locale::classic());
-    out << "/* Generated by lua2c. Native C execution; bytecode is retained only\n"
-           "   as metadata for Lua debug hooks, yield completion and string.dump.\n"
-           "   Instruction semantics derived from Lua 5.4.9; see lua.h license. */\n"
+    out << "/* Generated by lua2c. Native C execution; "
+        << (no_bytecode ? "no bytecode arrays.\n"
+                        : "bytecode is retained only\n   as metadata for Lua debug hooks, yield completion and string.dump.\n")
+        << "   Instruction semantics derived from Lua 5.4.9; see lua.h license. */\n"
            "#include <stdio.h>\n#include \"lua2c_vm.h\"\n#include \"lauxlib.h\"\n"
-           "#if LUA2C_ABI_VERSION != 0x00010009UL\n#error incompatible lua2c headers\n#endif\n"
+           "#if LUA2C_ABI_VERSION != 0x0001000AUL\n#error incompatible lua2c headers\n#endif\n"
            "#ifndef LUA2C_MAIN\n#define LUA2C_MAIN 0\n#endif\n"
            "#ifndef LUA2C_API\n#define LUA2C_API 0\n#endif\n";
     for (const auto* proto : protos)
-        out << "static int " << proto->name << "(lua_State *L);\nstatic const Lua2cProto lua2c_proto_" << proto->id << ";\n";
+        out << "static int " << proto->name << "(lua_State *L, int trap);\nstatic const Lua2cProto lua2c_proto_" << proto->id << ";\n";
+    if (no_bytecode) {
+        out << "#undef savepc\n#define savepc(L) (ci->u.l.lua2c_pc = pc)\n"
+               "#undef donextjump\n#define donextjump(ci) dojump(ci, lua2c_nextjump, 1)\n";
+        for (const auto* proto : protos)
+            out << "static int lua2c_resume_" << proto->id << "(lua_State *L);\n";
+    }
     Metadata metadata(out);
     const lua_Integer integer = 0x5678;
     const lua_Number number = 370.5;
@@ -305,11 +375,14 @@ std::string emit(Proto p, const std::string& module_name, const std::string& mai
     const auto number_probe = metadata.bytes(std::string(reinterpret_cast<const char*>(&number), sizeof(number)));
     out << "static const Lua2cBytes lua2c_integer_probe = " << integer_probe << ";\n"
         << "static const Lua2cBytes lua2c_number_probe = " << number_probe << ";\n";
-    for (const auto* proto : protos) metadata.proto(*proto);
-    for (const auto* proto : protos) emit_function(out, *proto, bodies);
+    for (const auto* proto : protos) metadata.proto(*proto, no_bytecode);
+    for (const auto* proto : protos) {
+        emit_function(out, *proto, bodies, no_bytecode);
+        if (no_bytecode) emit_resume(out, *proto);
+    }
     const char* module_state = main_name == "L" ? "lua2c_state" : "L";
     out << "\nstatic void lua2c_check_runtime(lua_State *L) {\n"
-           "  lua2c_checkabi(L, 0x00010009UL, sizeof(Proto), sizeof(lua_State), "
+           "  lua2c_checkabi(L, 0x0001000AUL, sizeof(Proto), sizeof(lua_State), "
         << sizeof(lua_Integer) << ", " << sizeof(lua_Number) << ",\n"
            "    lua2c_integer_probe.data, lua2c_number_probe.data);\n}\n"
            "int " << main_name << "(lua_State *L) {\n"

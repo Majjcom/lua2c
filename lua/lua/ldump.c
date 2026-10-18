@@ -214,9 +214,19 @@ static void dumpHeader (DumpState *D) {
 /*
 ** dump Lua function as precompiled chunk
 */
+static int candump (const Proto *f) {
+  int i;
+  if (f->code == NULL) return 0;
+  for (i = 0; i < f->sizep; i++)
+    if (!candump(f->p[i])) return 0;
+  return 1;
+}
+
+
 int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data,
               int strip) {
   DumpState D;
+  if (!candump(f)) return 1;  /* reject before calling the writer */
   D.L = L;
   D.writer = w;
   D.data = data;

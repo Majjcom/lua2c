@@ -4,7 +4,7 @@
 #include "lua.h"
 #include "lobject.h"
 
-#define LUA2C_ABI_VERSION 0x00010009UL
+#define LUA2C_ABI_VERSION 0x0001000AUL
 #define LUA2C_BOUNDARY_RETURN 0
 #define LUA2C_NEW_FRAME 1
 #define LUA2C_RETURN_TO_CALLER 2
@@ -41,7 +41,7 @@ typedef struct Lua2cProto {
   int linedefined, lastlinedefined;
   Lua2cBytes source;
   int sizecode;
-  const Instruction *code;
+  const Instruction *code;  /* NULL for no-bytecode native prototypes */
   int sizek;
   const Lua2cConstant *constants;
   int sizeupvalues;
@@ -54,7 +54,8 @@ typedef struct Lua2cProto {
   const AbsLineInfo *abslineinfo;
   int sizelocvars;
   const Lua2cLocal *locals;
-  lua_CFunction entry;
+  int (*entry)(lua_State *L, int trap);
+  lua_CFunction resume;
 } Lua2cProto;
 
 LUA_API void lua2c_checkabi(lua_State *L, unsigned long version,

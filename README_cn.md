@@ -69,6 +69,7 @@ build\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
 build\bin\lua2c.exe --header --module mymodule -o mymodule.c module.lua
 build\bin\lua2c.exe --main-name run_script --header -o program.c script.lua
 build\bin\lua2c.exe --strip -o program.c script.lua
+build\bin\lua2c.exe --strip --no-bytecode -o program.c script.lua
 ```
 
 输入格式默认自动识别；可使用 `--source` / `--bytecode` 强制指定。
@@ -78,6 +79,17 @@ build\bin\lua2c.exe --strip -o program.c script.lua
 保留函数定义起止行、指令、常量及执行所需元数据。traceback、行号 hook、debug API 和名称恢复
 可用的信息会减少；这不是代码混淆。`--chunk-name` 仍用于源码编译错误，但不会保留在 strip 后的输出中。
 公开入口名、模块名和生成的头文件不变；运行时通过 `load` / `loadfile` 编译的代码不会自动 strip。
+
+`--no-bytecode` 不在生成的 C 中保存指令数组，运行时也不分配或重建指令数组。
+此选项递归作用于源码和字节码输入，与 `--strip` 独立；默认仍保留数组。
+原生执行和协程/元方法恢复使用整数位置与生成的恢复函数；调用、返回、计数/行号 hook
+（包括 C hook 挂起）仍受支持，源码行号、局部变量和 upvalue 元数据在未 strip 时保留。
+依赖指令分析的调用名称推断、错误信息中的符号化变量描述会受限。
+对这些原生函数调用 `string.dump` 会报 `unable to dump given function`；
+C API `lua_dump` 返回失败，且不会调用 writer。运行时通过 `load` / `loadfile` 编译的函数仍有普通字节码，可正常 dump。
+常量、原生指令操作数及未 strip 的调试名称仍然存在，因此不保证无法逆向。
+本次运行时 ABI 已升级，已有的生成 C 文件及模块需要重新生成、编译。
+
 不指定 `-o` 时将生成代码写入 stdout。模块名必须是合法 C 标识符，默认 `lua2c_module`。
 `--header` 必须配合 `-o`，额外生成同目录、同名的 `.h` 文件（替换输出扩展名），默认不生成。
 例如 `-o mymodule.c --header` 输出 `mymodule.c` 和 `mymodule.h`。
@@ -90,7 +102,7 @@ build\bin\lua2c.exe --strip -o program.c script.lua
 ```c
 int lua2c_main(lua_State *L);
 /* 每个 Lua 函数原型对应一个文件内函数： */
-static int lua2c_gen_<name>_p<id>(lua_State *L);
+static int lua2c_gen_<name>_p<id>(lua_State *L, int trap);
 ```
 
 有调试信息时尽量恢复局部函数、全局函数及字段名称；匿名函数和 stripped bytecode 使用稳定编号。
@@ -190,6 +202,8 @@ options.module_name = "example";
 options.main_name = "run_example";
 // 可选；去除源码或字节码输入的 Lua 调试信息，默认 false。
 options.strip = true;
+// 可选；与 strip 独立，不保留字节码数组，原生函数不再支持 dump，默认 false。
+options.no_bytecode = true;
 
 std::string c = lua2c::convert("print(1 + 2)", options);
 lua2c::convert_to_file("print(1 + 2)", "example.c", options);
@@ -229,7 +243,7 @@ target_compile_definitions(your_c_target PRIVATE LUA2C_MAIN=1)
 - 直接访问 Lua 栈、`TValue`、表及 upvalue；整数回绕、浮点运算、比较、位运算等使用 Lua 语义的 C 快路径。
 - 保留真实 `LClosure`、Lua 调用帧、GC 根与屏障，复用内核的元方法、字符串、关闭变量及错误展开机制。
 - 已转换函数通过原生 C 路径执行，不是嵌入 `.luac` 后调用 `lua_load` 的解释器包装。
-- 保留指令元数据以支持恢复元方法操作和 `string.dump`；未启用 `strip` 时也保留调试元数据。dump 后重新 load 的函数默认由原 VM 执行，不自动重新编译。
+- 默认保留指令元数据以支持恢复元方法操作和 `string.dump`；`no_bytecode` 改用生成的恢复函数，不支持 dump 原生函数。未启用 `strip` 时保留调试元数据。dump 后重新 load 的函数默认由原 VM 执行，不自动重新编译。
 - 运行时 `load` / `loadfile` / 动态模块可与生成函数互相调用。
 
 完整语义是设计目标，不是已对 Lua 所有行为进行形式化证明。C 模块入口和 chunk 入口（默认 `lua2c_main`）本身是额外的宿主 C 边界，
@@ -248,12 +262,15 @@ target_compile_definitions(your_c_target PRIVATE LUA2C_MAIN=1)
 
 MSVC x64 已测试：
 
-- Release、共享运行时：175 项 CTest。
-- Debug、静态运行时、Lua 内部断言/API 检查开启：174 项 CTest（不包含 DLL require 测试）。
+- Release、共享运行时：243 项 CTest。
+- Debug、静态运行时、Lua 内部断言/API 检查开启：241 项 CTest（不包含 DLL require 测试）。
 
 包括原有 24 个脚本的源码、bytecode、stripped 路径，以及协程/元方法 yield、尾调用、`<close>`、
 GC、动态加载、dump/load、精确 debug hooks、数值边界、C 宿主入口与两个宏的组合。
 差分参照为配套 Lua 的普通解释执行路径。
+无字节码模式覆盖源码/字节码输入、与 strip 组合、运行时无指令数组、协程/元方法恢复、
+可变参数及开放结果调用的精确 hook、C hook 挂起、GC、调用 writer 前拒绝 dump、
+解释函数的正常 dump/load、大操作数与无字节码共享模块。
 另有手工构造的 `LOADKX` bytecode 与 600 元素/字段的大操作数测试。
 头文件输出覆盖源码/bytecode、CLI、默认关闭、路径冲突与 C/C++ 宿主链接测试。
 自定义入口覆盖源码/bytecode、C/C++ 调用、协程恢复、模块加载、双宏启用，以及多个生成文件同时链接。

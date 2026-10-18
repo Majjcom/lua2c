@@ -822,8 +822,15 @@ static void pushclosure (lua_State *L, Proto *p, UpVal **encup, StkId base,
 void luaV_finishOp (lua_State *L) {
   CallInfo *ci = L->ci;
   StkId base = ci->func.p + 1;
-  Instruction inst = *(ci->u.l.savedpc - 1);  /* interrupted instruction */
-  OpCode op = GET_OPCODE(inst);
+  Instruction inst;
+  OpCode op;
+  if (ci_func(ci)->p->code == NULL) {
+    lua_assert(ci_func(ci)->p->lua2c_resume != NULL);
+    ci_func(ci)->p->lua2c_resume(L);
+    return;
+  }
+  inst = *(ci->u.l.savedpc - 1);  /* interrupted instruction */
+  op = GET_OPCODE(inst);
   switch (op) {  /* finish its execution */
     case OP_MMBIN: case OP_MMBINI: case OP_MMBINK: {
       setobjs2s(L, base + GETARG_A(*(ci->u.l.savedpc - 2)), --L->top.p);
@@ -1176,8 +1183,9 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
   base = ci->func.p + 1;
   if (cl->p->lua2c_entry != NULL) {
     int action;
-    ci->u.l.trap = trap;
-    action = cl->p->lua2c_entry(L);
+    /* Keep the local trap separate: VARARGPREP initially suppresses hooks,
+       but must recover ci->u.l.trap after adjusting its arguments. */
+    action = cl->p->lua2c_entry(L, trap);
     if (action == 0) return;
     ci = L->ci;
     if (action == 1) goto startfunc;

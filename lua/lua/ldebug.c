@@ -43,7 +43,7 @@ static const char strupval[] = "upvalue";
 
 static int currentpc (CallInfo *ci) {
   lua_assert(isLua(ci));
-  return pcRel(ci->u.l.savedpc, ci_func(ci)->p);
+  return luaG_currentpc(ci);
 }
 
 
@@ -308,7 +308,7 @@ static void collectvalidlines (lua_State *L, Closure *f) {
       if (!p->is_vararg)  /* regular function? */
         i = 0;  /* consider all instructions */
       else {  /* vararg function */
-        lua_assert(GET_OPCODE(p->code[0]) == OP_VARARGPREP);
+        lua_assert(p->code == NULL || GET_OPCODE(p->code[0]) == OP_VARARGPREP);
         currentline = nextline(p, currentline, 0);
         i = 1;  /* skip first instruction (OP_VARARGPREP) */
       }
@@ -437,6 +437,7 @@ static int findsetreg (const Proto *p, int lastpc, int reg) {
   int pc;
   int setreg = -1;  /* keep last instruction that changed 'reg' */
   int jmptarget = 0;  /* any code before this address is conditional */
+  if (p->code == NULL) return -1;  /* no symbolic execution in no-code mode */
   if (testMMMode(GET_OPCODE(p->code[lastpc])))
     lastpc--;  /* previous instruction was not actually executed */
   for (pc = 0; pc < lastpc; pc++) {
@@ -620,7 +621,9 @@ static const char *getobjname (const Proto *p, int lastpc, int reg,
 static const char *funcnamefromcode (lua_State *L, const Proto *p,
                                      int pc, const char **name) {
   TMS tm = (TMS)0;  /* (initial value avoids warnings) */
-  Instruction i = p->code[pc];  /* calling instruction */
+  Instruction i;
+  if (p->code == NULL) return NULL;  /* inferred call names are unavailable */
+  i = p->code[pc];  /* calling instruction */
   switch (GET_OPCODE(i)) {
     case OP_CALL:
     case OP_TAILCALL:
@@ -903,7 +906,7 @@ int luaG_tracecall (lua_State *L) {
   CallInfo *ci = L->ci;
   Proto *p = ci_func(ci)->p;
   ci->u.l.trap = 1;  /* ensure hooks will be checked */
-  if (ci->u.l.savedpc == p->code) {  /* first instruction (not resuming)? */
+  if (luaG_currentpc(ci) == -1) {  /* first instruction (not resuming)? */
     if (p->is_vararg)
       return 0;  /* hooks will start at VARARGPREP instruction */
     else if (!(ci->callstatus & CIST_HOOKYIELD))  /* not yieded? */
@@ -925,7 +928,7 @@ int luaG_tracecall (lua_State *L) {
 ** This function is not "Protected" when called, so it should correct
 ** 'L->top.p' before calling anything that can run the GC.
 */
-int luaG_traceexec (lua_State *L, const Instruction *pc) {
+static int traceexec (lua_State *L, int npci, int uses_top) {
   CallInfo *ci = L->ci;
   lu_byte mask = L->hookmask;
   const Proto *p = ci_func(ci)->p;
@@ -934,8 +937,10 @@ int luaG_traceexec (lua_State *L, const Instruction *pc) {
     ci->u.l.trap = 0;  /* don't need to stop again */
     return 0;  /* turn off 'trap' */
   }
-  pc++;  /* reference is always next instruction */
-  ci->u.l.savedpc = pc;  /* save 'pc' */
+  if (p->code != NULL)
+    ci->u.l.savedpc = p->code + npci + 1;
+  else
+    ci->u.l.lua2c_pc = npci + 1;
   counthook = (mask & LUA_MASKCOUNT) && (--L->hookcount == 0);
   if (counthook)
     resethookcount(L);  /* reset count */
@@ -945,14 +950,13 @@ int luaG_traceexec (lua_State *L, const Instruction *pc) {
     ci->callstatus &= ~CIST_HOOKYIELD;  /* erase mark */
     return 1;  /* do not call hook again (VM yielded, so it did not move) */
   }
-  if (!isIT(*(ci->u.l.savedpc - 1)))  /* top not being used? */
+  if (!uses_top)  /* top not being used? */
     L->top.p = ci->top.p;  /* correct top */
   if (counthook)
     luaD_hook(L, LUA_HOOKCOUNT, -1, 0, 0);  /* call count hook */
   if (mask & LUA_MASKLINE) {
     /* 'L->oldpc' may be invalid; use zero in this case */
     int oldpc = (L->oldpc < p->sizecode) ? L->oldpc : 0;
-    int npci = pcRel(pc, p);
     if (npci <= oldpc ||  /* call hook when jump back (loop), */
         changedline(p, oldpc, npci)) {  /* or when enter new line */
       int newline = luaG_getfuncline(p, npci);
@@ -967,5 +971,15 @@ int luaG_traceexec (lua_State *L, const Instruction *pc) {
     luaD_throw(L, LUA_YIELD);
   }
   return 1;  /* keep 'trap' on */
+}
+
+
+int luaG_traceexec (lua_State *L, const Instruction *pc) {
+  return traceexec(L, pcRel(pc + 1, ci_func(L->ci)->p), isIT(*pc));
+}
+
+
+int luaG_traceexecnative (lua_State *L, int pc, int uses_top) {
+  return traceexec(L, pc, uses_top);
 }
 

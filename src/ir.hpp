@@ -35,5 +35,5 @@ struct Proto {
 };
 Proto parse_bytecode(std::string_view input);
 void validate(const Proto& proto, const Proto* parent = nullptr);
-std::string emit(Proto proto, const std::string& module_name, const std::string& main_name);
+std::string emit(Proto proto, const std::string& module_name, const std::string& main_name, bool no_bytecode = false);
 }

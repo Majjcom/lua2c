@@ -14,6 +14,8 @@ struct Options {
     std::string main_name = "lua2c_main";
     // Remove Lua debug metadata recursively, matching luac -s. Default: retain it.
     bool strip = false;
+    // Omit instruction arrays. Native closures cannot be dumped; inferred debug names are limited.
+    bool no_bytecode = false;
 };
 
 class Error : public std::runtime_error {

@@ -34,6 +34,25 @@ add_test(NAME cli_strip
         "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/entry.lua"
         "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/cli_strip.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/strip_cli.cmake")
+add_test(NAME cli_no_bytecode
+    COMMAND "${CMAKE_COMMAND}" "-DCLI=$<TARGET_FILE:lua2c_cli>" "-DLUAC=$<TARGET_FILE:luac>"
+        "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/entry.lua"
+        "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/cli_no_bytecode.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/no_bytecode_cli.cmake")
+
+foreach(mode debug strip)
+    set(native_options --no-bytecode)
+    if(mode STREQUAL "strip")
+        list(APPEND native_options --strip)
+    endif()
+    set(native_c "${CMAKE_CURRENT_BINARY_DIR}/generated/no_bytecode_${mode}.c")
+    add_custom_command(OUTPUT "${native_c}"
+        COMMAND lua2c_cli ${native_options} -o "${native_c}" "${CMAKE_CURRENT_SOURCE_DIR}/no_bytecode.lua"
+        DEPENDS lua2c_cli "${CMAKE_CURRENT_SOURCE_DIR}/no_bytecode.lua" VERBATIM)
+    add_executable(lua2c_no_bytecode_${mode} no_bytecode_host.c "${native_c}")
+    target_link_libraries(lua2c_no_bytecode_${mode} PRIVATE lualib)
+    add_test(NAME no_bytecode.${mode} COMMAND lua2c_no_bytecode_${mode})
+endforeach()
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/renamed")
 set(renamed_c "${CMAKE_CURRENT_BINARY_DIR}/generated/renamed/entry.c")
@@ -73,8 +92,10 @@ add_executable(lua2c_fixtures fixtures.cpp)
 target_link_libraries(lua2c_fixtures PRIVATE lua2c lualib)
 add_custom_command(OUTPUT
     "${CMAKE_CURRENT_BINARY_DIR}/generated/loadkx.c"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/loadkx_no_bytecode.c"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/loadkx.luac"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/large_operands.c"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/large_operands_no_bytecode.c"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/large_operands.lua"
     COMMAND lua2c_fixtures "${CMAKE_CURRENT_BINARY_DIR}/generated"
     DEPENDS lua2c_fixtures VERBATIM)
@@ -83,18 +104,28 @@ foreach(fixture loadkx large_operands)
     if(fixture STREQUAL "loadkx")
         set(extension luac)
     endif()
-    add_executable(test_${fixture} "${CMAKE_CURRENT_BINARY_DIR}/generated/${fixture}.c")
-    target_link_libraries(test_${fixture} PRIVATE lualib)
-    target_compile_definitions(test_${fixture} PRIVATE LUA2C_MAIN=1)
-    add_test(NAME "${fixture}"
-        COMMAND "${CMAKE_COMMAND}" "-DLUA=$<TARGET_FILE:lua>"
-            "-DNATIVE=$<TARGET_FILE:test_${fixture}>"
-            "-DSCRIPT=${CMAKE_CURRENT_BINARY_DIR}/generated/${fixture}.${extension}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/compare.cmake")
+    foreach(suffix "" "_no_bytecode")
+        add_executable(test_${fixture}${suffix} "${CMAKE_CURRENT_BINARY_DIR}/generated/${fixture}${suffix}.c")
+        target_link_libraries(test_${fixture}${suffix} PRIVATE lualib)
+        target_compile_definitions(test_${fixture}${suffix} PRIVATE LUA2C_MAIN=1)
+        add_test(NAME "${fixture}${suffix}"
+            COMMAND "${CMAKE_COMMAND}" "-DLUA=$<TARGET_FILE:lua>"
+                "-DNATIVE=$<TARGET_FILE:test_${fixture}${suffix}>"
+                "-DSCRIPT=${CMAKE_CURRENT_BINARY_DIR}/generated/${fixture}.${extension}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/compare.cmake")
+    endforeach()
 endforeach()
 foreach(script IN LISTS LUA2C_TEST_SCRIPTS)
     get_filename_component(name "${script}" NAME_WE)
-    foreach(mode source bytecode stripped strip_source strip_bytecode)
+    set(modes source bytecode stripped strip_source strip_bytecode)
+    # Dump/load and inferred call names intentionally differ in no-bytecode mode.
+    if(NOT name MATCHES "^(27_|30_|32_)")
+        list(APPEND modes no_bytecode no_bytecode_strip)
+        if(name MATCHES "^(25_|31_)")
+            list(APPEND modes no_bytecode_input no_bytecode_strip_input)
+        endif()
+    endif()
+    foreach(mode IN LISTS modes)
         set(generated "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_${mode}.c")
         set(input "${script}")
         set(reference "${script}")
@@ -115,6 +146,16 @@ foreach(script IN LISTS LUA2C_TEST_SCRIPTS)
             if(mode STREQUAL "strip_bytecode")
                 set(input "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_bytecode.luac")
                 set(conversion_options -s --bytecode)
+            endif()
+        elseif(mode MATCHES "^no_bytecode")
+            set(conversion_options --no-bytecode)
+            if(mode MATCHES "strip")
+                list(APPEND conversion_options --strip)
+                set(reference "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_stripped.luac")
+            endif()
+            if(mode MATCHES "input$")
+                set(input "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_bytecode.luac")
+                list(APPEND conversion_options --bytecode)
             endif()
         endif()
         add_custom_command(OUTPUT "${generated}"
@@ -145,4 +186,15 @@ if(LUA2C_SHARED_RUNTIME)
     target_compile_definitions(native_module PRIVATE LUA2C_API=1)
     target_link_libraries(native_module PRIVATE lualib)
     add_test(NAME require_module COMMAND lua "${CMAKE_CURRENT_SOURCE_DIR}/require.lua" "$<TARGET_FILE:native_module>")
+    set(no_bytecode_module_c "${CMAKE_CURRENT_BINARY_DIR}/generated/native_no_bytecode.c")
+    add_custom_command(OUTPUT "${no_bytecode_module_c}"
+        COMMAND lua2c_cli --no-bytecode --strip --module native_no_bytecode --main-name run_native_no_bytecode
+            -o "${no_bytecode_module_c}" "${CMAKE_CURRENT_SOURCE_DIR}/module.lua"
+        DEPENDS lua2c_cli "${CMAKE_CURRENT_SOURCE_DIR}/module.lua" VERBATIM)
+    add_library(native_no_bytecode MODULE "${no_bytecode_module_c}")
+    set_target_properties(native_no_bytecode PROPERTIES PREFIX "" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    target_compile_definitions(native_no_bytecode PRIVATE LUA2C_API=1)
+    target_link_libraries(native_no_bytecode PRIVATE lualib)
+    add_test(NAME require_no_bytecode_module
+        COMMAND lua "${CMAKE_CURRENT_SOURCE_DIR}/require.lua" "$<TARGET_FILE:native_no_bytecode>" native_no_bytecode)
 endif()

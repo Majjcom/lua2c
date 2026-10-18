@@ -17,6 +17,12 @@
 /* Active Lua function (given call info) */
 #define ci_func(ci)		(clLvalue(s2v((ci)->func.p)))
 
+/* No-code native frames use integer positions, never fabricated pointers. */
+#define luaG_currentpc(ci) (ci_func(ci)->p->code == NULL \
+  ? (ci)->u.l.lua2c_pc - 1 : pcRel((ci)->u.l.savedpc, ci_func(ci)->p))
+#define luaG_shiftpc(ci,n) { if (ci_func(ci)->p->code == NULL) \
+  (ci)->u.l.lua2c_pc += (n); else (ci)->u.l.savedpc += (n); }
+
 
 #define resethookcount(L)	(L->hookcount = L->basehookcount)
 
@@ -58,6 +64,7 @@ LUAI_FUNC const char *luaG_addinfo (lua_State *L, const char *msg,
                                                   TString *src, int line);
 LUAI_FUNC l_noret luaG_errormsg (lua_State *L);
 LUAI_FUNC int luaG_traceexec (lua_State *L, const Instruction *pc);
+LUAI_FUNC int luaG_traceexecnative (lua_State *L, int pc, int uses_top);
 LUAI_FUNC int luaG_tracecall (lua_State *L);
 
 

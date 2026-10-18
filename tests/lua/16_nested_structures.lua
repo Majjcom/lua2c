@@ -31,8 +31,8 @@ local transforms = {
     function(x) return x + 10 end,
     function(x) return -x end,
 }
-for i, fn in ipairs(transforms) do
-    print("transform", i, fn(5))
+for i, fun in ipairs(transforms) do
+    print("transform", i, fun(5))
 end
 
 -- Recursive data structure with closures

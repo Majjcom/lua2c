@@ -398,9 +398,9 @@ void luaD_hookcall (lua_State *L, CallInfo *ci) {
     int event = (ci->callstatus & CIST_TAIL) ? LUA_HOOKTAILCALL
                                              : LUA_HOOKCALL;
     Proto *p = ci_func(ci)->p;
-    ci->u.l.savedpc++;  /* hooks assume 'pc' is already incremented */
+    luaG_shiftpc(ci, 1);  /* hooks assume 'pc' is already incremented */
     luaD_hook(L, event, -1, 1, p->numparams);
-    ci->u.l.savedpc--;  /* correct 'pc' */
+    luaG_shiftpc(ci, -1);  /* correct 'pc' */
   }
 }
 
@@ -426,7 +426,7 @@ static void rethook (lua_State *L, CallInfo *ci, int nres) {
     ci->func.p -= delta;
   }
   if (isLua(ci = ci->previous))
-    L->oldpc = pcRel(ci->u.l.savedpc, ci_func(ci)->p);  /* set 'oldpc' */
+    L->oldpc = luaG_currentpc(ci);  /* set 'oldpc' */
 }
 
 
@@ -589,6 +589,7 @@ int luaD_pretailcall (lua_State *L, CallInfo *ci, StkId func,
       ci->top.p = func + 1 + fsize;  /* top for new function */
       lua_assert(ci->top.p <= L->stack_last.p);
       ci->u.l.savedpc = p->code;  /* starting point */
+      ci->u.l.lua2c_pc = 0;
       ci->callstatus |= CIST_TAIL;
       L->top.p = func + narg1;  /* set top */
       return -1;
@@ -629,6 +630,7 @@ CallInfo *luaD_precall (lua_State *L, StkId func, int nresults) {
       checkstackGCp(L, fsize, func);
       L->ci = ci = prepCallInfo(L, func, nresults, 0, func + 1 + fsize);
       ci->u.l.savedpc = p->code;  /* starting point */
+      ci->u.l.lua2c_pc = 0;
       for (; narg < nfixparams; narg++)
         setnilvalue(s2v(L->top.p++));  /* complete missing arguments */
       lua_assert(ci->top.p <= L->stack_last.p);
@@ -821,7 +823,7 @@ static void resume (lua_State *L, void *ud) {
       /* undo increment made by 'luaG_traceexec': instruction was not
          executed yet */
       lua_assert(ci->callstatus & CIST_HOOKYIELD);
-      ci->u.l.savedpc--;
+      luaG_shiftpc(ci, -1);
       L->top.p = firstArg;  /* discard arguments */
       luaV_execute(L, ci);  /* just continue running Lua code */
     }

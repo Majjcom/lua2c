@@ -2,7 +2,7 @@ local path = assert(arg[1])
 local directory = path:match("^(.*)[/\\]") or "."
 local extension = path:match("(%.[^%.]+)$")
 package.cpath = directory .. "/?" .. extension .. ";" .. package.cpath
-local module = require("native_module")
+local module = require(arg[2] or "native_module")
 assert(module.square(9) == 81)
 assert(module.counter(2) == 2)
 assert(module.counter(3) == 5)

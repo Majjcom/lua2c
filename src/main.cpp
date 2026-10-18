@@ -19,6 +19,8 @@ void print_help() {
                  "  --bytecode           Force INPUT to be treated as Lua 5.4 bytecode.\n"
                  "  -s, --strip          Remove Lua debug information (default: retain it).\n"
                  "                       Applies to source and bytecode, like luac -s.\n"
+                 "  --no-bytecode        Omit bytecode arrays (default: retain them).\n"
+                 "                       Disables dumping native functions; limits debug names.\n"
                  "  -o FILE              Write generated C to FILE (default: stdout).\n"
                  "  --header             Also generate a matching .h file beside FILE.\n"
                  "                       Requires -o; replaces the output extension with .h.\n"
@@ -60,6 +62,7 @@ int main(int argc, char** argv) {
             if (argument == "--source") options.input_kind = lua2c::InputKind::Source;
             else if (argument == "--bytecode") options.input_kind = lua2c::InputKind::Bytecode;
             else if (argument == "--strip" || argument == "-s") options.strip = true;
+            else if (argument == "--no-bytecode") options.no_bytecode = true;
             else if (argument == "--header") generate_header = true;
             else if (argument == "-o" || argument == "--module" || argument == "--main-name" || argument == "--chunk-name") {
                 if (++i >= argc) throw lua2c::Error("missing value after " + argument);

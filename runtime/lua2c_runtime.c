@@ -46,12 +46,18 @@ static void fillproto(lua_State *L, Proto *p, const Lua2cProto *d, TString *sour
   p->linedefined = d->linedefined;
   p->lastlinedefined = d->lastlinedefined;
   p->lua2c_entry = d->entry;
+  p->lua2c_resume = d->resume;
   p->source = d->source.data ? newstring(L, p, d->source) : source;
   if (p->source) luaC_objbarrier(L, p, p->source);
 
-  p->code = luaM_newvectorchecked(L, d->sizecode, Instruction);
-  p->sizecode = d->sizecode;
-  memcpy(p->code, d->code, d->sizecode * sizeof(Instruction));
+  if (d->code != NULL) {
+    p->code = luaM_newvectorchecked(L, d->sizecode, Instruction);
+    p->sizecode = d->sizecode;
+    memcpy(p->code, d->code, d->sizecode * sizeof(Instruction));
+  }
+  else {
+    p->sizecode = d->sizecode;  /* logical positions, not an allocated array */
+  }
   p->k = luaM_newvectorchecked(L, d->sizek, TValue);
   p->sizek = d->sizek;
   for (i = 0; i < p->sizek; ++i) setnilvalue(&p->k[i]);

@@ -261,12 +261,13 @@ Proto *luaF_newproto (lua_State *L) {
   f->lastlinedefined = 0;
   f->source = NULL;
   f->lua2c_entry = NULL;
+  f->lua2c_resume = NULL;
   return f;
 }
 
 
 void luaF_freeproto (lua_State *L, Proto *f) {
-  luaM_freearray(L, f->code, f->sizecode);
+  if (f->code != NULL) luaM_freearray(L, f->code, f->sizecode);
   luaM_freearray(L, f->p, f->sizep);
   luaM_freearray(L, f->k, f->sizek);
   luaM_freearray(L, f->lineinfo, f->sizelineinfo);

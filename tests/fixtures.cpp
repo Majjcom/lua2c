@@ -63,6 +63,9 @@ int main(int argc, char** argv) {
         variable(binary, 0); variable(binary, 0); variable(binary, 0); variable(binary, 0); // Debug.
         save(directory / "loadkx.luac", binary);
         lua2c::convert_to_file(binary, directory / "loadkx.c");
+        lua2c::Options native_options;
+        native_options.no_bytecode = true;
+        lua2c::convert_to_file(binary, directory / "loadkx_no_bytecode.c", native_options);
 
         std::ostringstream stress;
         stress << "local array = {";
@@ -75,6 +78,7 @@ int main(int argc, char** argv) {
                   "print('long', #long, long:sub(4998))\n";
         save(directory / "large_operands.lua", stress.str());
         lua2c::convert_file_to_file(directory / "large_operands.lua", directory / "large_operands.c");
+        lua2c::convert_file_to_file(directory / "large_operands.lua", directory / "large_operands_no_bytecode.c", native_options);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
