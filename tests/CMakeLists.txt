@@ -29,12 +29,17 @@ add_test(NAME cli_header
         "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/entry.lua"
         "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/cli_header.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/header_cli.cmake")
+add_test(NAME cli_strip
+    COMMAND "${CMAKE_COMMAND}" "-DCLI=$<TARGET_FILE:lua2c_cli>" "-DLUAC=$<TARGET_FILE:luac>"
+        "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/entry.lua"
+        "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/cli_strip.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/strip_cli.cmake")
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/renamed")
 set(renamed_c "${CMAKE_CURRENT_BINARY_DIR}/generated/renamed/entry.c")
 set(renamed_h "${CMAKE_CURRENT_BINARY_DIR}/generated/renamed/entry.h")
 add_custom_command(OUTPUT "${renamed_c}" "${renamed_h}"
-    COMMAND lua2c_cli --header --module entry --main-name run_custom_chunk
+    COMMAND lua2c_cli --strip --header --module entry --main-name run_custom_chunk
         -o "${renamed_c}" "${CMAKE_CURRENT_SOURCE_DIR}/entry.lua"
     DEPENDS lua2c_cli "${CMAKE_CURRENT_SOURCE_DIR}/entry.lua" VERBATIM)
 add_executable(lua2c_renamed_host host.c "${renamed_c}" "${renamed_h}")
@@ -89,10 +94,12 @@ foreach(fixture loadkx large_operands)
 endforeach()
 foreach(script IN LISTS LUA2C_TEST_SCRIPTS)
     get_filename_component(name "${script}" NAME_WE)
-    foreach(mode source bytecode stripped)
+    foreach(mode source bytecode stripped strip_source strip_bytecode)
         set(generated "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_${mode}.c")
         set(input "${script}")
-        if(NOT mode STREQUAL "source")
+        set(reference "${script}")
+        set(conversion_options)
+        if(mode STREQUAL "bytecode" OR mode STREQUAL "stripped")
             set(input "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_${mode}.luac")
             set(strip_option)
             if(mode STREQUAL "stripped")
@@ -101,10 +108,18 @@ foreach(script IN LISTS LUA2C_TEST_SCRIPTS)
             add_custom_command(OUTPUT "${input}"
                 COMMAND luac ${strip_option} -o "${input}" "${script}"
                 DEPENDS luac "${script}" VERBATIM)
+            set(reference "${input}")
+        elseif(mode STREQUAL "strip_source" OR mode STREQUAL "strip_bytecode")
+            set(reference "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_stripped.luac")
+            set(conversion_options --strip --source)
+            if(mode STREQUAL "strip_bytecode")
+                set(input "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}_bytecode.luac")
+                set(conversion_options -s --bytecode)
+            endif()
         endif()
         add_custom_command(OUTPUT "${generated}"
-            COMMAND lua2c_cli --module "test_${name}" -o "${generated}" "${input}"
-            DEPENDS lua2c_cli "${input}" VERBATIM)
+            COMMAND lua2c_cli ${conversion_options} --module "test_${name}" -o "${generated}" "${input}"
+            DEPENDS lua2c_cli "${input}" "${reference}" VERBATIM)
         set(target "test_${name}_${mode}")
         add_executable(${target} "${generated}")
         target_compile_definitions(${target} PRIVATE LUA2C_MAIN=1)
@@ -113,7 +128,7 @@ foreach(script IN LISTS LUA2C_TEST_SCRIPTS)
         set_property(SOURCE "${generated}" PROPERTY GENERATED TRUE)
         add_test(NAME "${name}.${mode}"
             COMMAND "${CMAKE_COMMAND}" "-DLUA=$<TARGET_FILE:lua>"
-                "-DNATIVE=$<TARGET_FILE:${target}>" "-DSCRIPT=${input}"
+                "-DNATIVE=$<TARGET_FILE:${target}>" "-DSCRIPT=${reference}"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/compare.cmake")
         set_tests_properties("${name}.${mode}" PROPERTIES TIMEOUT 60)
     endforeach()
@@ -122,7 +137,7 @@ endforeach()
 if(LUA2C_SHARED_RUNTIME)
     set(module_c "${CMAKE_CURRENT_BINARY_DIR}/generated/native_module.c")
     add_custom_command(OUTPUT "${module_c}"
-        COMMAND lua2c_cli --module native_module --main-name run_native_module -o "${module_c}"
+        COMMAND lua2c_cli --strip --module native_module --main-name run_native_module -o "${module_c}"
             "${CMAKE_CURRENT_SOURCE_DIR}/module.lua"
         DEPENDS lua2c_cli "${CMAKE_CURRENT_SOURCE_DIR}/module.lua" VERBATIM)
     add_library(native_module MODULE "${module_c}")

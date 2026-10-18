@@ -17,6 +17,8 @@ void print_help() {
                  "  -h, --help           Show this help and exit.\n"
                  "  --source             Force INPUT to be treated as Lua source.\n"
                  "  --bytecode           Force INPUT to be treated as Lua 5.4 bytecode.\n"
+                 "  -s, --strip          Remove Lua debug information (default: retain it).\n"
+                 "                       Applies to source and bytecode, like luac -s.\n"
                  "  -o FILE              Write generated C to FILE (default: stdout).\n"
                  "  --header             Also generate a matching .h file beside FILE.\n"
                  "                       Requires -o; replaces the output extension with .h.\n"
@@ -34,6 +36,7 @@ void print_help() {
                  "Examples:\n"
                  "  lua2c -o program.c script.lua\n"
                  "  lua2c --bytecode -o program.c script.luac\n"
+                 "  lua2c --strip -o program.c script.lua\n"
                  "  lua2c --header --main-name run_demo --module demo -o demo.c demo.lua\n"
                  "\n"
                  "Generated C (compile-time options, both disabled by default):\n"
@@ -56,6 +59,7 @@ int main(int argc, char** argv) {
             }
             if (argument == "--source") options.input_kind = lua2c::InputKind::Source;
             else if (argument == "--bytecode") options.input_kind = lua2c::InputKind::Bytecode;
+            else if (argument == "--strip" || argument == "-s") options.strip = true;
             else if (argument == "--header") generate_header = true;
             else if (argument == "-o" || argument == "--module" || argument == "--main-name" || argument == "--chunk-name") {
                 if (++i >= argc) throw lua2c::Error("missing value after " + argument);

@@ -12,6 +12,8 @@ struct Options {
     std::string chunk_name = "=(lua2c)";
     std::string module_name = "lua2c_module";
     std::string main_name = "lua2c_main";
+    // Remove Lua debug metadata recursively, matching luac -s. Default: retain it.
+    bool strip = false;
 };
 
 class Error : public std::runtime_error {

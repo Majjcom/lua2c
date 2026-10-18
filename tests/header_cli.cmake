@@ -5,7 +5,7 @@ foreach(flag --help -h)
         message(FATAL_ERROR "CLI help failed for ${flag}: ${status}\n${output}\n${error}")
     endif()
     foreach(fragment "Usage:" "Input:" "Options:" "Examples:" "--source" "--bytecode"
-            "-o FILE" "--header" "--main-name NAME" "--module NAME" "--chunk-name NAME"
+            "-s, --strip" "-o FILE" "--header" "--main-name NAME" "--module NAME" "--chunk-name NAME"
             "Default: lua2c_main" "Default: lua2c_module" "default: stdout" "default: @INPUT"
             "Requires -o" "compile-time options" "LUA2C_MAIN=1" "LUA2C_API=1")
         string(FIND "${output}" "${fragment}" position)

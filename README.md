@@ -71,11 +71,19 @@ build\bin\lua2c.exe --bytecode -o program.c script.luac
 build\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
 build\bin\lua2c.exe --header --module mymodule -o mymodule.c module.lua
 build\bin\lua2c.exe --main-name run_script --header -o program.c script.lua
+build\bin\lua2c.exe --strip -o program.c script.lua
 ```
 
 The input format is detected automatically by default. Use `--source` or `--bytecode` to explicitly specify the format.
 
 `--chunk-name` sets the source chunk's debug name. For file input, the default is `@file_path`.
+
+`--strip` (or `-s`) removes Lua debug information from source or bytecode input. Debug information is retained by default.
+Like `luac -s`, this recursively removes source names, line mappings, local variable metadata, and upvalue names,
+while retaining function definition start/end lines, instructions, constants, and execution metadata.
+Tracebacks, line hooks, debug APIs, and name recovery have less information after stripping; this is not code obfuscation.
+`--chunk-name` still applies to source compilation errors, but is omitted from stripped output.
+Public entry names, module names, and generated headers are unchanged. Code compiled later using runtime `load`/`loadfile` is not stripped automatically.
 
 If `-o` is omitted, the generated code is written to stdout. Module names must be valid C identifiers. The default module name is `lua2c_module`.
 
@@ -198,6 +206,8 @@ lua2c::Options options;
 options.module_name = "example";
 // Optional; lua2c_main is still generated if omitted.
 options.main_name = "run_example";
+// Optional; strip Lua debug information for either source or bytecode input.
+options.strip = true; // Default: false.
 
 std::string c = lua2c::convert("print(1 + 2)", options);
 lua2c::convert_to_file("print(1 + 2)", "example.c", options);
@@ -243,7 +253,7 @@ target_compile_definitions(your_c_target PRIVATE LUA2C_MAIN=1)
 - Directly accesses the Lua stack, `TValue`, tables, and upvalues. Integer wraparound, floating-point operations, comparisons, bitwise operations, and other common operations use C fast paths that preserve Lua semantics.
 - Preserves genuine `LClosure` objects, Lua call frames, GC roots and barriers, while reusing the core VM's mechanisms for metamethods, strings, to-be-closed variables, and error unwinding.
 - Converted functions execute through native C paths. This is not an interpreter wrapper that embeds `.luac` and calls `lua_load`.
-- Retains instruction and debug metadata to support exact debug hooks, restoration of metamethod operations, and `string.dump`. Functions dumped and subsequently loaded execute through the original VM by default and are not automatically recompiled.
+- Retains instruction metadata to support restoration of metamethod operations and `string.dump`. Debug metadata is also retained unless `strip` is enabled. Functions dumped and subsequently loaded execute through the original VM by default and are not automatically recompiled.
 - Runtime `load`, `loadfile`, and dynamically loaded modules can interoperate with generated functions.
 
 Full semantic compatibility is a design goal, not a formally proven guarantee for every Lua behavior. The C module entry point and chunk entry point (default: `lua2c_main`) introduce additional host C boundaries that can be observed by `debug`. The generated Lua functions themselves still report `what="Lua"`.
@@ -262,8 +272,8 @@ Behavior involving `collectgarbage("count")`, execution time, memory usage, and 
 
 Tested on MSVC x64:
 
-- Release, shared runtime: 107 CTest tests.
-- Debug, static runtime, with Lua internal assertions and API checks enabled: 106 CTest tests (excluding the DLL `require` test).
+- Release, shared runtime: 175 CTest tests.
+- Debug, static runtime, with Lua internal assertions and API checks enabled: 174 CTest tests (excluding the DLL `require` test).
 
 The test suite covers source and bytecode paths for 24 existing scripts, including stripped bytecode, as well as coroutine and metamethod yields, tail calls, `<close>`, GC, dynamic loading, dump/load, exact debug hooks, numeric edge cases, C host entry points, and combinations of the two macros.
 
@@ -274,6 +284,10 @@ Additional tests cover manually constructed `LOADKX` bytecode and large operands
 Header generation tests cover source and bytecode input, CLI usage, disabled-by-default behavior, path conflicts, and C/C++ host linking.
 
 Custom entry-point tests cover source and bytecode input, C/C++ calls, coroutine resumption, module loading, enabling both macros, and linking multiple generated files together.
+
+Strip tests compare API and CLI output with Lua's stripped dump, including nested closures and absolute line info.
+Every differential script also runs with `--strip` on source and `-s` on unstripped bytecode, using `luac -s` as the reference.
+Additional coverage checks stripped debug APIs and dump/load, unchanged public headers, malformed inputs, and stripped custom-entry hosts/modules.
 
 Performance depends on the workload and the C compiler's optimization level. Release builds are recommended. No speedup is guaranteed with unoptimized Debug builds or TinyCC.
 

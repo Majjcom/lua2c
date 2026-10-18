@@ -30,9 +30,51 @@ void rejects(const std::string& input, const lua2c::Options& options = {}) {
     catch (const lua2c::Error&) { return; }
     throw std::runtime_error("invalid input accepted");
 }
+void test_strip() {
+    // Include nested closures, captured names, and gaps requiring absolute line info.
+    const std::string source = "local captured_secret = 7\nlocal function outer_secret(x)\n"
+        "  local function inner_secret(y)\n    local debug_local = x + y\n" + std::string(300, '\n') +
+        "    return debug_local + captured_secret, 'keep this constant'\n  end\n"
+        "  return inner_secret\nend\nreturn outer_secret\n";
+    lua2c::Options options;
+    check(!options.strip, "debug info is stripped by default");
+    options.chunk_name = "@strip_unit_secret.lua";
+    const auto normal = lua2c::convert(source, options);
+    check(normal.find("lua2c_gen_inner_secret_") != std::string::npos, "test fixture has no debug names");
+    check(normal.find("lua2c_abslines_") != std::string::npos, "test fixture has no absolute line info");
+    lua_State* L = luaL_newstate();
+    check(L != nullptr, "strip state allocation failed");
+    check(luaL_loadbuffer(L, source.data(), source.size(), options.chunk_name.c_str()) == LUA_OK, "strip load failed");
+    std::string bytecode, stripped_bytecode;
+    check(lua_dump(L, dump, &bytecode, 0) == 0, "debug dump failed");
+    check(lua_dump(L, dump, &stripped_bytecode, 1) == 0, "stripped dump failed");
+    lua_close(L);
+    const auto reference = lua2c::convert(stripped_bytecode, options);
+    check(reference != normal && reference.size() < normal.size(), "strip did not reduce debug output");
+    options.strip = true;
+    check(lua2c::convert(source, options) == reference, "source strip differs from Lua's stripped dump");
+    check(lua2c::convert(bytecode, options) == reference, "bytecode strip differs from Lua's stripped dump");
+    check(lua2c::convert(stripped_bytecode, options) == reference, "stripping is not idempotent");
+    check(reference.find("lua2c_lines_") == std::string::npos &&
+          reference.find("lua2c_abslines_") == std::string::npos &&
+          reference.find("lua2c_locals_") == std::string::npos &&
+          reference.find("lua2c_gen_inner_secret_") == std::string::npos, "debug metadata retained");
+    options.input_kind = lua2c::InputKind::Source;
+    check(lua2c::convert(source, options) == reference, "forced source strip differs");
+    options.input_kind = lua2c::InputKind::Bytecode;
+    check(lua2c::convert(bytecode, options) == reference, "forced bytecode strip differs");
+    for (std::size_t n = 0; n < bytecode.size(); ++n) rejects(bytecode.substr(0, n), options);
+    rejects(bytecode + "extra", options);
+    options.input_kind = lua2c::InputKind::Auto;
+    options.chunk_name = "@another_debug_name.lua";
+    check(lua2c::convert(source, options) == reference, "chunk debug name survived stripping");
+    check(!lua2c::convert("error('must not execute')", options).empty(), "strip executed the input");
+    rejects("local = broken", options);
+}
 }
 int main() {
     try {
+        test_strip();
         const std::string source = "local function add(a,b) return a+b end; return add(2,3)";
         auto code = lua2c::convert(source);
         check(code.find("int lua2c_main(lua_State *L)") != std::string::npos, "missing main entry");
@@ -151,6 +193,18 @@ int main() {
         lua2c::convert_file_to_file(input, output, named_options, true);
         check(read_file(output) == lua2c::convert_file(input, named_options), "file custom entry mismatch");
         check(read_file(header) == named_header, "file custom header mismatch");
+        named_options.strip = true;
+        lua2c::convert_to_file(source, output, named_options, true);
+        check(read_file(output) == lua2c::convert(source, named_options), "strip to-file mismatch");
+        check(read_file(header) == named_header, "strip changed the public header");
+        const auto stripped_output = read_file(output);
+        named_options.input_kind = lua2c::InputKind::Bytecode;
+        lua2c::convert_to_file(bytecode, output, named_options, true);
+        check(read_file(output) == stripped_output && read_file(header) == named_header, "strip bytecode/header mismatch");
+        named_options.input_kind = lua2c::InputKind::Auto;
+        lua2c::convert_file_to_file(input, output, named_options, true);
+        check(read_file(output) == lua2c::convert_file(input, named_options), "strip file-to-file mismatch");
+        check(read_file(header) == named_header, "strip changed the file-to-file header");
         const auto named_file_output = read_file(output);
         named_options.main_name = "for";
         rejected = false;

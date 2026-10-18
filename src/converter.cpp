@@ -4,6 +4,7 @@
 #include <iterator>
 #include <memory>
 #include <exception>
+#include <utility>
 extern "C" {
 #include "lua.h"
 #include "lauxlib.h"
@@ -60,12 +61,26 @@ std::string emit_header(const Options& options) {
         "int luaopen_" + options.module_name + "(lua_State *L);\n#endif\n\n"
         "#ifdef __cplusplus\n}\n#endif\n\n#endif /* " + guard + " */\n";
 }
+void strip_debug(detail::Proto& proto) {
+    proto.source.reset();
+    proto.lineinfo.clear();
+    proto.abslineinfo.clear();
+    proto.locals.clear();
+    for (auto& upvalue : proto.upvalues) upvalue.name.reset();
+    for (auto& child : proto.children) strip_debug(child);
+    // Like luac -s, retain definition lines, instructions and upvalue descriptors.
+}
+std::string emit_bytecode(std::string_view input, const Options& options) {
+    auto proto = detail::parse_bytecode(input); // Validate before discarding debug data.
+    if (options.strip) strip_debug(proto);
+    return detail::emit(std::move(proto), options.module_name, options.main_name);
+}
 }
 
 std::string convert(std::string_view input, const Options& options) {
     const bool binary = options.input_kind == InputKind::Bytecode ||
         (options.input_kind == InputKind::Auto && !input.empty() && input[0] == '\x1b');
-    if (binary) return detail::emit(detail::parse_bytecode(input), options.module_name, options.main_name);
+    if (binary) return emit_bytecode(input, options);
     if (input.size() >= 3 && input.substr(0, 3) == std::string_view("\xef\xbb\xbf", 3)) input.remove_prefix(3);
     std::string source;
     if (!input.empty() && input[0] == '#') {
@@ -86,7 +101,7 @@ std::string convert(std::string_view input, const Options& options) {
     const int dumpstatus = lua_dump(state.get(), writer, &buffer, 0);
     if (buffer.error) std::rethrow_exception(buffer.error);
     if (dumpstatus) throw Error("Lua bytecode serialization failed");
-    return detail::emit(detail::parse_bytecode(buffer.bytes), options.module_name, options.main_name);
+    return emit_bytecode(buffer.bytes, options);
 }
 
 void convert_to_file(std::string_view input, const std::filesystem::path& output,

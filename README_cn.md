@@ -68,10 +68,16 @@ build\bin\lua2c.exe --bytecode -o program.c script.luac
 build\bin\lua2c.exe --module mymodule -o mymodule.c module.lua
 build\bin\lua2c.exe --header --module mymodule -o mymodule.c module.lua
 build\bin\lua2c.exe --main-name run_script --header -o program.c script.lua
+build\bin\lua2c.exe --strip -o program.c script.lua
 ```
 
 输入格式默认自动识别；可使用 `--source` / `--bytecode` 强制指定。
 `--chunk-name` 设置源码调试名称；文件输入默认使用 `@文件路径`。
+`--strip`（或 `-s`）去除源码或字节码输入的 Lua 调试信息，默认保留。
+行为与 `luac -s` 一致：递归移除源码名称、行号映射、局部变量元数据和 upvalue 名称，
+保留函数定义起止行、指令、常量及执行所需元数据。traceback、行号 hook、debug API 和名称恢复
+可用的信息会减少；这不是代码混淆。`--chunk-name` 仍用于源码编译错误，但不会保留在 strip 后的输出中。
+公开入口名、模块名和生成的头文件不变；运行时通过 `load` / `loadfile` 编译的代码不会自动 strip。
 不指定 `-o` 时将生成代码写入 stdout。模块名必须是合法 C 标识符，默认 `lua2c_module`。
 `--header` 必须配合 `-o`，额外生成同目录、同名的 `.h` 文件（替换输出扩展名），默认不生成。
 例如 `-o mymodule.c --header` 输出 `mymodule.c` 和 `mymodule.h`。
@@ -182,6 +188,8 @@ lua2c::Options options;
 options.module_name = "example";
 // 可选；省略时依然生成 lua2c_main。
 options.main_name = "run_example";
+// 可选；去除源码或字节码输入的 Lua 调试信息，默认 false。
+options.strip = true;
 
 std::string c = lua2c::convert("print(1 + 2)", options);
 lua2c::convert_to_file("print(1 + 2)", "example.c", options);
@@ -221,7 +229,7 @@ target_compile_definitions(your_c_target PRIVATE LUA2C_MAIN=1)
 - 直接访问 Lua 栈、`TValue`、表及 upvalue；整数回绕、浮点运算、比较、位运算等使用 Lua 语义的 C 快路径。
 - 保留真实 `LClosure`、Lua 调用帧、GC 根与屏障，复用内核的元方法、字符串、关闭变量及错误展开机制。
 - 已转换函数通过原生 C 路径执行，不是嵌入 `.luac` 后调用 `lua_load` 的解释器包装。
-- 保留指令和调试元数据以支持精确 hooks、恢复元方法操作和 `string.dump`。dump 后重新 load 的函数默认由原 VM 执行，不自动重新编译。
+- 保留指令元数据以支持恢复元方法操作和 `string.dump`；未启用 `strip` 时也保留调试元数据。dump 后重新 load 的函数默认由原 VM 执行，不自动重新编译。
 - 运行时 `load` / `loadfile` / 动态模块可与生成函数互相调用。
 
 完整语义是设计目标，不是已对 Lua 所有行为进行形式化证明。C 模块入口和 chunk 入口（默认 `lua2c_main`）本身是额外的宿主 C 边界，
@@ -240,8 +248,8 @@ target_compile_definitions(your_c_target PRIVATE LUA2C_MAIN=1)
 
 MSVC x64 已测试：
 
-- Release、共享运行时：107 项 CTest。
-- Debug、静态运行时、Lua 内部断言/API 检查开启：106 项 CTest（不包含 DLL require 测试）。
+- Release、共享运行时：175 项 CTest。
+- Debug、静态运行时、Lua 内部断言/API 检查开启：174 项 CTest（不包含 DLL require 测试）。
 
 包括原有 24 个脚本的源码、bytecode、stripped 路径，以及协程/元方法 yield、尾调用、`<close>`、
 GC、动态加载、dump/load、精确 debug hooks、数值边界、C 宿主入口与两个宏的组合。
@@ -249,6 +257,9 @@ GC、动态加载、dump/load、精确 debug hooks、数值边界、C 宿主入�
 另有手工构造的 `LOADKX` bytecode 与 600 元素/字段的大操作数测试。
 头文件输出覆盖源码/bytecode、CLI、默认关闭、路径冲突与 C/C++ 宿主链接测试。
 自定义入口覆盖源码/bytecode、C/C++ 调用、协程恢复、模块加载、双宏启用，以及多个生成文件同时链接。
+strip 测试对照 Lua 自带的 stripped dump，覆盖嵌套闭包和绝对行号信息。
+所有差分脚本还会分别对源码使用 `--strip`、未 strip 字节码使用 `-s`，以 `luac -s` 输出为参照；
+另有 strip 后的 debug API、dump/load、头文件不变、非法输入，以及自定义入口宿主/模块的测试。
 
 速度取决于工作负载及 C 编译器优化。优先使用 Release；Debug 和 TinyCC 缺少优化时不承诺加速。
 历史测量（升级至 5.4.9 前）：本机 MSVC x64 Release 对 `24_arith_bench.lua` 的 7 次进程级运行中位数为：普通 Lua VM **106.82 ms**，
